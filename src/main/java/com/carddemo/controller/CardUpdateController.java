@@ -1,10 +1,12 @@
 package com.carddemo.controller;
 
-import com.carddemo.model.dto.*;
+import com.carddemo.model.dto.ApiResponse;
+import com.carddemo.model.dto.CardSearchRequest;
+import com.carddemo.model.dto.CardUpdateRequest;
+import com.carddemo.model.dto.CardUpdateResponse;
 import com.carddemo.service.CardUpdateService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
