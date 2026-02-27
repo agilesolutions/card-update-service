@@ -1,37 +1,32 @@
 package com.carddemo.service;
 
-import com.carddemo.model.request.CardUpdateRequest;
-import com.carddemo.model.response.CardUpdateResponse;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
+import com.carddemo.model.dto.CardSearchRequest;
+import com.carddemo.model.dto.CardUpdateRequest;
+import com.carddemo.model.dto.CardUpdateResponse;
 
 /**
- * Service interface for Credit Card Update operations
- * Migrated from COBOL COCRDUPC.cbl main processing logic
+ * Card Update Service Interface
+ * Migrated from COBOL COCRDUPC paragraph logic
  */
 public interface CardUpdateService {
 
     /**
-     * Migrated from COBOL: MAIN-PARA / PROCESS-ENTER-KEY
-     * Full update of credit card record
+     * Retrieve card for update - maps to COBOL: 1000-GET-DETAILS-SCREEN
      */
-    CardUpdateResponse updateCard(String cardNum, CardUpdateRequest request);
+    CardUpdateResponse.CardData getCardDetails(String cardNumber);
 
     /**
-     * Migrated from COBOL: READ-PROCESSING / STARTBR-CARD-FILE
-     * Retrieve card for display/update form population
+     * Update credit card - maps to COBOL: 9000-UPDATE-CARD
      */
-    CardUpdateResponse getCardForUpdate(String cardNum);
+    CardUpdateResponse updateCard(CardUpdateRequest request, String transactionId);
 
     /**
-     * Migrated from COBOL: STARTBR-CARD-FILE with customer browse
-     * List all cards for a customer
+     * Search and validate card - maps to COBOL: 1200-SEARCH-CARD
      */
-    Page<CardUpdateResponse> getCardsByCustomer(Long custId, Pageable pageable);
+    CardUpdateResponse.CardData searchCard(CardSearchRequest request);
 
     /**
-     * Migrated from COBOL: DELETE processing (if applicable)
-     * Soft delete / deactivate card
+     * Validate card data - maps to COBOL: 1400-SEND-EDIT-ERRMSG
      */
-    CardUpdateResponse deactivateCard(String cardNum, String reason);
+    boolean validateCardData(CardUpdateRequest request);
 }

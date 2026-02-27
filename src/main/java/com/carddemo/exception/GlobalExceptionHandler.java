@@ -1,7 +1,8 @@
 package com.carddemo.exception;
 
-import com.carddemo.model.response.CardUpdateResponse;
+import com.carddemo.model.dto.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -9,90 +10,106 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import java.util.stream.Collectors;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
- * Global exception handler
- * Maps COBOL ABEND codes and error conditions to HTTP responses
- *
- * COBOL error handling → HTTP Status mapping:
- * ─────────────────────────────────────────────
- * NOTFND condition     → 404 Not Found
- * DUPREC condition     → 409 Conflict
- * Validation errors    → 400 Bad Request
- * IOERR condition      → 500 Internal Server Error
+ * Global Exception Handler
+ * Maps to COBOL error handling paragraphs:
+ * - 9999-ABEND-PROGRAM → Internal server error
+ * - RESP handling in EXEC CICS commands → HTTP status codes
+ * - WS-ERR-MSG population → Error response messages
  */
 @RestControllerAdvice
 @Slf4j
 public class GlobalExceptionHandler {
 
     /**
-     * Handles CardNotFoundException
-     * Migrated from COBOL NOTFND condition handling
+     * Handle CardNotFoundException
+     * Maps to COBOL: WHEN DFHRESP(NOTFND)
      */
     @ExceptionHandler(CardNotFoundException.class)
-    public ResponseEntity<CardUpdateResponse> handleCardNotFound(
+    public ResponseEntity<ApiResponse<Void>> handleCardNotFoundException(
             CardNotFoundException ex) {
-        log.warn("Card not found: {}", ex.getMessage());
+        log.error("Card not found: {}", ex.getMessage());
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(CardUpdateResponse.builder()
-                        .status("FAILURE")
-                        .message(ex.getMessage())
-                        .returnCode(ex.getReturnCode())
-                        .build());
+                .body(ApiResponse.error(404, ex.getMessage(), generateErrorId()));
     }
 
     /**
-     * Handles CardUpdateException
-     * Migrated from COBOL business rule error handling
+     * Handle CardUpdateException
+     * Maps to COBOL: MOVE 'Update failed' TO WS-ERR-MSG
      */
     @ExceptionHandler(CardUpdateException.class)
-    public ResponseEntity<CardUpdateResponse> handleCardUpdateException(
+    public ResponseEntity<ApiResponse<Void>> handleCardUpdateException(
             CardUpdateException ex) {
-        log.warn("Card update error [{}]: {}", ex.getReturnCode(), ex.getMessage());
-        HttpStatus status = "0009".equals(ex.getReturnCode())
-                ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
-        return ResponseEntity.status(status)
-                .body(CardUpdateResponse.builder()
-                        .status("FAILURE")
-                        .message(ex.getMessage())
-                        .returnCode(ex.getReturnCode())
-                        .build());
+        log.error("Card update error: {}", ex.getMessage());
+
+        String message = ex.getValidationErrors() != null
+                ? "Validation failed: " + ex.getValidationErrors()
+                : ex.getMessage();
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.error(400, message, generateErrorId()));
     }
 
     /**
-     * Handles Bean Validation errors
-     * Migrated from COBOL VALIDATE-INPUT-KEY-FIELDS error handling
+     * Handle Bean Validation errors (@Valid)
+     * Maps to COBOL: Field-level validation in 1400-SEND-EDIT-ERRMSG
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<CardUpdateResponse> handleValidationErrors(
+    public ResponseEntity<ApiResponse<Map<String, String>>> handleValidationErrors(
             MethodArgumentNotValidException ex) {
-        String errors = ex.getBindingResult().getFieldErrors()
-                .stream()
-                .map(FieldError::getDefaultMessage)
-                .collect(Collectors.joining("; "));
+        Map<String, String> errors = new HashMap<>();
 
-        log.warn("Validation failed: {}", errors);
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(CardUpdateResponse.builder()
-                        .status("FAILURE")
-                        .message("Validation failed: " + errors)
-                        .returnCode("0006")
-                        .build());
+        ex.getBindingResult().getAllErrors().forEach(error -> {
+            String fieldName = ((FieldError) error).getField();
+            String errorMessage = error.getDefaultMessage();
+            errors.put(fieldName, errorMessage);
+        });
+
+        log.warn("Bean validation errors: {}", errors);
+
+        ApiResponse<Map<String, String>> response = ApiResponse.<Map<String, String>>builder()
+                .status(400)
+                .message("Validation failed")
+                .data(errors)
+                .transactionId(generateErrorId())
+                .success(false)
+                .build();
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
     /**
-     * Handles unexpected errors
-     * Migrated from COBOL ABEND handling
+     * Handle OptimisticLockingFailureException
+     * Maps to COBOL: RESP = DFHRESP(DUPKEY) concurrent update scenario
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLockException(
+            OptimisticLockingFailureException ex) {
+        log.error("Concurrent update conflict: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.error(409,
+                        "Record was modified by another process. Please retry.",
+                        generateErrorId()));
+    }
+
+    /**
+     * Handle generic exceptions
+     * Maps to COBOL: 9999-ABEND-PROGRAM
      */
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<CardUpdateResponse> handleGenericException(Exception ex) {
-        log.error("Unexpected error: {}", ex.getMessage(), ex);
+    public ResponseEntity<ApiResponse<Void>> handleGenericException(Exception ex) {
+        log.error("Unexpected error occurred: {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(CardUpdateResponse.builder()
-                        .status("FAILURE")
-                        .message("An unexpected error occurred")
-                        .returnCode("9999")
-                        .build());
+                .body(ApiResponse.error(500,
+                        "An unexpected error occurred. Please contact support.",
+                        generateErrorId()));
+    }
+
+    private String generateErrorId() {
+        return "ERR-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     }
 }

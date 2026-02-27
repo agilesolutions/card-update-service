@@ -1,7 +1,6 @@
 package com.carddemo.validation;
 
-import com.carddemo.exception.CardUpdateException;
-import com.carddemo.model.request.CardUpdateRequest;
+import com.carddemo.model.dto.CardUpdateRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -11,178 +10,225 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Business validation logic migrated from COBOL COCRDUPC.cbl
+ * Card Update Validator
  *
- * Original COBOL paragraphs migrated:
- *  - VALIDATE-INPUT-KEY-FIELDS
- *  - VALIDATE-MANDATORY-FIELDS
- *  - VALIDATE-CARD-DATA
- *  - UPD-CHECKS-OK
- *  - ERRORSCLR
+ * Migrated from COBOL COCRDUPC business validation rules:
+ * ========================================================
+ * 1400-SEND-EDIT-ERRMSG - Main validation paragraph
+ *
+ * COBOL Validation Logic mapped to Java:
+ * - IF CCARD-CVV-CODE NOT NUMERIC → validateCvvCode()
+ * - IF CCARD-EXPIRY-DATE = SPACES → validateExpirationDate()
+ * - IF CCARD-ACTIVE-STATUS NOT = 'Y' OR 'N' → validateActiveStatus()
+ * - IF CCARD-CREDIT-LIMIT NOT NUMERIC → validateCreditLimit()
+ * - IF CCARD-NAME = SPACES → validateEmbossedName()
  */
 @Component
 @Slf4j
 public class CardUpdateValidator {
 
-    // Mapped from COBOL WS-RETURN-CODE values
-    public static final String RC_SUCCESS = "0000";
-    public static final String RC_CARD_NOT_FOUND = "0001";
-    public static final String RC_CUSTOMER_NOT_FOUND = "0002";
-    public static final String RC_INVALID_CARD_STATUS = "0003";
-    public static final String RC_INVALID_EXPIRY_DATE = "0004";
-    public static final String RC_INVALID_CREDIT_LIMIT = "0005";
-    public static final String RC_MANDATORY_FIELD_MISSING = "0006";
-    public static final String RC_CARD_NUM_INVALID = "0007";
-    public static final String RC_NO_CHANGES = "0008";
-    public static final String RC_CUST_ID_MISMATCH = "0009";
-    public static final String RC_CASH_LIMIT_EXCEEDS_CREDIT = "0010";
+    private static final String ACTIVE_STATUS_YES = "Y";
+    private static final String ACTIVE_STATUS_NO = "N";
+    private static final BigDecimal MAX_CREDIT_LIMIT = new BigDecimal("9999999999.99");
+    private static final int CARD_NUMBER_LENGTH = 16;
+    private static final int CVV_LENGTH = 3;
 
     /**
-     * Migrated from COBOL: VALIDATE-INPUT-KEY-FIELDS
-     * Validates card number format
+     * Main validation method
+     * Maps to COBOL: PERFORM 1400-SEND-EDIT-ERRMSG
      */
-    public void validateCardNumber(String cardNum) {
+    public List<String> validate(CardUpdateRequest request) {
         List<String> errors = new ArrayList<>();
 
-        if (cardNum == null || cardNum.isBlank()) {
+        validateCardNumber(request.getCardNumber(), errors);
+        validateAccountId(request.getAccountId(), errors);
+        validateCvvCode(request.getCvvCode(), errors);
+        validateEmbossedName(request.getEmbossedName(), errors);
+        validateExpirationDate(request.getExpirationDate(), errors);
+        validateActiveStatus(request.getActiveStatus(), errors);
+        validateCreditLimit(request.getCreditLimit(), errors);
+        validateCashCreditLimit(request.getCashCreditLimit(), errors);
+        validateCreditLimitRelationship(request.getCreditLimit(),
+                request.getCashCreditLimit(), errors);
+
+        return errors;
+    }
+
+    /**
+     * Validate card number
+     * COBOL: IF CCARD-NUM NOT NUMERIC OR LENGTH NOT = 16
+     */
+    private void validateCardNumber(String cardNumber, List<String> errors) {
+        if (cardNumber == null || cardNumber.isBlank()) {
             errors.add("Card number is required");
-        } else if (!cardNum.matches("^[0-9]{16}$")) {
-            errors.add("Card number must be 16 numeric digits");
-        } else if (!isValidLuhn(cardNum)) {
-            errors.add("Card number fails Luhn check");
+            return;
         }
-
-        if (!errors.isEmpty()) {
-            throw new CardUpdateException(RC_CARD_NUM_INVALID,
-                    String.join("; ", errors));
+        if (!cardNumber.matches("\\d+")) {
+            errors.add("Card number must be numeric");
+            return;
         }
-    }
-
-    /**
-     * Migrated from COBOL: VALIDATE-MANDATORY-FIELDS
-     * Checks all required fields are present
-     */
-    public void validateMandatoryFields(CardUpdateRequest request) {
-        List<String> errors = new ArrayList<>();
-
-        if (request.getCustId() == null) {
-            errors.add("Customer ID is mandatory");
+        if (cardNumber.length() != CARD_NUMBER_LENGTH) {
+            errors.add("Card number must be exactly 16 digits");
         }
-        if (request.getCardStatus() == null || request.getCardStatus().isBlank()) {
-            errors.add("Card status is mandatory");
-        }
-
-        if (!errors.isEmpty()) {
-            throw new CardUpdateException(RC_MANDATORY_FIELD_MISSING,
-                    String.join("; ", errors));
+        // Luhn algorithm validation - PCI DSS compliance
+        if (!isValidLuhn(cardNumber)) {
+            errors.add("Card number failed checksum validation (Luhn)");
         }
     }
 
     /**
-     * Migrated from COBOL: VALIDATE-CARD-DATA
-     * Full business validation of card update data
+     * Validate account ID
+     * COBOL: IF CDEMO-ACCT-ID NOT NUMERIC
      */
-    public void validateCardData(CardUpdateRequest request) {
-        List<String> errors = new ArrayList<>();
-
-        // Validate card status - COBOL: IF CDEMO-CARD-STATUS NOT IN ('0', '1', '2')
-        if (request.getCardStatus() != null &&
-                !request.getCardStatus().matches("^[012]$")) {
-            errors.add("Card status must be 0 (Inactive), 1 (Active), or 2 (Suspended)");
+    private void validateAccountId(String accountId, List<String> errors) {
+        if (accountId == null || accountId.isBlank()) {
+            errors.add("Account ID is required");
+            return;
         }
-
-        // Validate expiration date - COBOL: VALIDATE-EXP-DATE
-        if (request.getCardExpirationDate() != null) {
-            if (request.getCardExpirationDate().isBefore(LocalDate.now())) {
-                errors.add("Card expiration date cannot be in the past");
-            }
-            // Max 10 years in future - COBOL business rule
-            if (request.getCardExpirationDate()
-                    .isAfter(LocalDate.now().plusYears(10))) {
-                errors.add("Card expiration date cannot be more than 10 years in the future");
-            }
+        if (!accountId.matches("\\d+")) {
+            errors.add("Account ID must be numeric");
         }
-
-        // Validate credit limit - COBOL: CDEMO-CREDIT-LIMIT NUMERIC check
-        if (request.getCreditLimit() != null) {
-            if (request.getCreditLimit().compareTo(BigDecimal.ZERO) < 0) {
-                errors.add("Credit limit cannot be negative");
-            }
-            if (request.getCreditLimit()
-                    .compareTo(new BigDecimal("9999999999.99")) > 0) {
-                errors.add("Credit limit exceeds maximum allowed value");
-            }
+        if (accountId.length() > 11) {
+            errors.add("Account ID cannot exceed 11 digits");
         }
+    }
 
-        // Validate cash limit does not exceed credit limit
-        // COBOL: IF CDEMO-CASH-CREDIT-LIMIT > CDEMO-CREDIT-LIMIT
-        if (request.getCashCreditLimit() != null && request.getCreditLimit() != null) {
-            if (request.getCashCreditLimit()
-                    .compareTo(request.getCreditLimit()) > 0) {
-                errors.add("Cash credit limit cannot exceed credit limit");
-            }
+    /**
+     * Validate CVV code
+     * COBOL: IF CCARD-CVV-CODE NOT NUMERIC
+     *        MOVE 'CVV Code must be numeric' TO WS-ERR-MSG
+     */
+    private void validateCvvCode(String cvvCode, List<String> errors) {
+        if (cvvCode == null || cvvCode.isBlank()) {
+            errors.add("CVV code is required");
+            return;
         }
+        if (!cvvCode.matches("\\d+")) {
+            errors.add("CVV code must be numeric");
+            return;
+        }
+        if (cvvCode.length() != CVV_LENGTH) {
+            errors.add("CVV code must be exactly 3 digits");
+        }
+    }
 
-        // Validate embossed name - COBOL: PIC X(50) alpha check
-        if (request.getCardEmbossedName() != null &&
-                request.getCardEmbossedName().length() > 50) {
+    /**
+     * Validate embossed name
+     * COBOL: IF CCARD-EMBOSSED-NAME = SPACES
+     *        MOVE 'Embossed name cannot be blank' TO WS-ERR-MSG
+     */
+    private void validateEmbossedName(String embossedName, List<String> errors) {
+        if (embossedName == null || embossedName.isBlank()) {
+            errors.add("Embossed name cannot be blank");
+            return;
+        }
+        if (embossedName.length() > 50) {
             errors.add("Embossed name cannot exceed 50 characters");
         }
-
-        // Validate open date not in future
-        if (request.getOpenDate() != null &&
-                request.getOpenDate().isAfter(LocalDate.now())) {
-            errors.add("Open date cannot be in the future");
-        }
-
-        if (!errors.isEmpty()) {
-            throw new CardUpdateException(RC_INVALID_CREDIT_LIMIT,
-                    String.join("; ", errors));
+        if (!embossedName.matches("[A-Za-z\\s\\-\\.]+")) {
+            errors.add("Embossed name contains invalid characters");
         }
     }
 
     /**
-     * Migrated from COBOL: COMPARE-OLD-NEW-RECORDS / UPD-CHECKS-OK
-     * Checks if any fields actually changed to avoid unnecessary updates
+     * Validate expiration date
+     * COBOL: IF CCARD-EXPIRY-DATE = SPACES OR CCARD-EXPIRY-DATE NOT VALID
+     *        MOVE 'Invalid expiry date' TO WS-ERR-MSG
      */
-    public boolean hasChanges(CardUpdateRequest request,
-                              com.carddemo.model.entity.CardData existingCard) {
-        if (!request.getCardStatus().equals(existingCard.getCardStatus())) return true;
-        if (isChanged(request.getCardEmbossedName(), existingCard.getCardEmbossedName()))
-            return true;
-        if (isChanged(request.getCardExpirationDate(),
-                existingCard.getCardExpirationDate())) return true;
-        if (isChanged(request.getCreditLimit(), existingCard.getCreditLimit())) return true;
-        if (isChanged(request.getCashCreditLimit(), existingCard.getCashCreditLimit()))
-            return true;
-        if (isChanged(request.getGroupId(), existingCard.getGroupId())) return true;
-        if (isChanged(request.getCardActiveStatus(), existingCard.getCardActiveStatus()))
-            return true;
-        return false;
+    private void validateExpirationDate(LocalDate expirationDate, List<String> errors) {
+        if (expirationDate == null) {
+            errors.add("Expiration date is required");
+            return;
+        }
+        if (!expirationDate.isAfter(LocalDate.now())) {
+            errors.add("Expiration date must be in the future");
+        }
+        // Max 10 years in future (reasonable card limit)
+        if (expirationDate.isAfter(LocalDate.now().plusYears(10))) {
+            errors.add("Expiration date cannot exceed 10 years from today");
+        }
     }
 
     /**
-     * Luhn algorithm - card number validity check
-     * Migrated from COBOL: CHECK-CARD-NUM paragraph
+     * Validate active status
+     * COBOL: IF CCARD-ACTIVE-STATUS NOT = 'Y' AND
+     *           CCARD-ACTIVE-STATUS NOT = 'N'
+     *        MOVE 'Active status must be Y or N' TO WS-ERR-MSG
      */
-    private boolean isValidLuhn(String cardNum) {
+    private void validateActiveStatus(String activeStatus, List<String> errors) {
+        if (activeStatus == null || activeStatus.isBlank()) {
+            errors.add("Active status is required");
+            return;
+        }
+        if (!ACTIVE_STATUS_YES.equals(activeStatus) && !ACTIVE_STATUS_NO.equals(activeStatus)) {
+            errors.add("Active status must be Y or N");
+        }
+    }
+
+    /**
+     * Validate credit limit
+     * COBOL: IF CCARD-CREDIT-LIMIT NOT NUMERIC OR < 0
+     *        MOVE 'Credit limit must be positive numeric' TO WS-ERR-MSG
+     */
+    private void validateCreditLimit(BigDecimal creditLimit, List<String> errors) {
+        if (creditLimit == null) {
+            errors.add("Credit limit is required");
+            return;
+        }
+        if (creditLimit.compareTo(BigDecimal.ZERO) < 0) {
+            errors.add("Credit limit cannot be negative");
+        }
+        if (creditLimit.compareTo(MAX_CREDIT_LIMIT) > 0) {
+            errors.add("Credit limit exceeds maximum allowed value");
+        }
+    }
+
+    /**
+     * Validate cash credit limit
+     * COBOL: IF CCARD-CASH-CREDIT-LIMIT NOT NUMERIC OR < 0
+     */
+    private void validateCashCreditLimit(BigDecimal cashCreditLimit, List<String> errors) {
+        if (cashCreditLimit == null) return; // Optional field
+
+        if (cashCreditLimit.compareTo(BigDecimal.ZERO) < 0) {
+            errors.add("Cash credit limit cannot be negative");
+        }
+        if (cashCreditLimit.compareTo(MAX_CREDIT_LIMIT) > 0) {
+            errors.add("Cash credit limit exceeds maximum allowed value");
+        }
+    }
+
+    /**
+     * Validate cash credit limit <= total credit limit
+     * COBOL: IF CCARD-CASH-CREDIT-LIMIT > CCARD-CREDIT-LIMIT
+     *        MOVE 'Cash limit cannot exceed credit limit' TO WS-ERR-MSG
+     */
+    private void validateCreditLimitRelationship(BigDecimal creditLimit,
+                                                 BigDecimal cashCreditLimit, List<String> errors) {
+        if (creditLimit == null || cashCreditLimit == null) return;
+
+        if (cashCreditLimit.compareTo(creditLimit) > 0) {
+            errors.add("Cash credit limit cannot exceed total credit limit");
+        }
+    }
+
+    /**
+     * Luhn Algorithm for card number validation
+     * PCI DSS compliance requirement
+     */
+    private boolean isValidLuhn(String cardNumber) {
         int sum = 0;
         boolean alternate = false;
-        for (int i = cardNum.length() - 1; i >= 0; i--) {
-            int n = Integer.parseInt(String.valueOf(cardNum.charAt(i)));
+
+        for (int i = cardNumber.length() - 1; i >= 0; i--) {
+            int digit = Character.getNumericValue(cardNumber.charAt(i));
             if (alternate) {
-                n *= 2;
-                if (n > 9) n -= 9;
+                digit *= 2;
+                if (digit > 9) digit -= 9;
             }
-            sum += n;
+            sum += digit;
             alternate = !alternate;
         }
-        return sum % 10 == 0;
-    }
-
-    private boolean isChanged(Object newVal, Object oldVal) {
-        if (newVal == null && oldVal == null) return false;
-        if (newVal == null || oldVal == null) return true;
-        return !newVal.equals(oldVal);
+        return (sum % 10 == 0);
     }
 }

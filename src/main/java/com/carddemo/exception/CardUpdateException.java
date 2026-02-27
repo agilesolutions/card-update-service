@@ -1,22 +1,29 @@
 package com.carddemo.exception;
 
-import lombok.Getter;
+import java.util.List;
 
 /**
- * Exception for card update business rule violations
- * Replaces COBOL ABEND codes and error paragraphs
+ * Card Update Exception
+ * Maps to COBOL error conditions:
+ * - RESP = DFHRESP(DUPREC) - Duplicate record
+ * - RESP = DFHRESP(NOSPACE) - No space
+ * - Business rule violations
  */
-@Getter
 public class CardUpdateException extends RuntimeException {
-    private final String returnCode;
 
-    public CardUpdateException(String returnCode, String message) {
+    private final List<String> validationErrors;
+
+    public CardUpdateException(String message) {
         super(message);
-        this.returnCode = returnCode;
+        this.validationErrors = null;
     }
 
-    public CardUpdateException(String returnCode, String message, Throwable cause) {
-        super(message, cause);
-        this.returnCode = returnCode;
+    public CardUpdateException(String message, List<String> validationErrors) {
+        super(message);
+        this.validationErrors = validationErrors;
+    }
+
+    public List<String> getValidationErrors() {
+        return validationErrors;
     }
 }
