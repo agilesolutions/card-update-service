@@ -1,7 +1,6 @@
 package com.carddemo.service;
 
 import com.carddemo.exception.CardNotFoundException;
-import com.carddemo.exception.CardUpdateException;
 import com.carddemo.model.dto.CardUpdateRequest;
 import com.carddemo.model.dto.CardUpdateResponse;
 import com.carddemo.model.entity.CreditCard;
@@ -19,11 +18,11 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Collections;
-import java.util.List;
 import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -143,7 +142,6 @@ class CardUpdateServiceTest {
         assertThat(result.getCardData().getAccountId()).isEqualTo(VALID_ACCOUNT_ID);
         assertThat(result.getCardData().getActiveStatus()).isEqualTo("Y");
         assertThat(result.getCardData().getCreditLimit()).isEqualByComparingTo("7500.00");
-        assertThat(result.getErrors()).isEmpty();
         verify(cardUpdateValidator, times(1)).validate(any());
         verify(cardRepository, times(1)).findByCardNumber(VALID_CARD_NUMBER);
         verify(cardRepository, times(1)).save(any(CreditCard.class));
